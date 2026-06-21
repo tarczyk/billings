@@ -22,7 +22,14 @@ const COL_FILENAME  = 5;  // E
 const COL_FILE_ID   = 6;  // F – used for deduplication
 const COL_FILE_URL  = 7;  // G
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Gemini ────────────────────────────────────────────────────────────────────
+const GEMINI_MODEL_DEFAULT = 'gemini-3.5-flash';
+const GEMINI_MAX_RETRIES   = 3;
+const GEMINI_DELAY_MS      = 5000; // pause between images to stay within RPM limits
+
+function getGeminiModel_() {
+  return PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || GEMINI_MODEL_DEFAULT;
+}
 
 function getGeminiApiKey_() {
   const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
@@ -90,6 +97,8 @@ function przetworzNoweLiczniki() {
         const blob        = file.getBlob();
         const base64Image = Utilities.base64Encode(blob.getBytes());
         const odczyt      = analizujZdjecieGemini(base64Image, mimeType);
+
+        Utilities.sleep(GEMINI_DELAY_MS);
 
         const meterType = meter.type;
         const wartosc   = Number(odczyt.value);
@@ -221,7 +230,8 @@ function wczytajIstniejaceOdczyty_(sheet) {
 
 function analizujZdjecieGemini(base64Image, mimeType) {
   const apiKey = getGeminiApiKey_();
-  const url    = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  const model  = getGeminiModel_();
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   const prompt = `
 Extract the meter reading value from the image.
@@ -257,14 +267,29 @@ If reading is unclear, return:
     muteHttpExceptions: true
   };
 
-  const response     = UrlFetchApp.fetch(url, options);
-  const responseCode = response.getResponseCode();
-  const responseText = response.getContentText();
+  for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES; attempt++) {
+    const response     = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+    const responseText = response.getContentText();
 
-  if (responseCode !== 200) {
-    throw new Error(`Błąd Gemini API (HTTP ${responseCode}): ${responseText}`);
+    if (responseCode === 200) {
+      return parsujOdpowiedzGemini_(responseText);
+    }
+
+    if (responseCode === 429 && attempt < GEMINI_MAX_RETRIES) {
+      const waitMs = wyciagnijRetryDelayMs_(responseText) || (attempt * 30000);
+      Logger.log(`Gemini 429 (${model}), próba ${attempt}/${GEMINI_MAX_RETRIES}, czekam ${waitMs}ms`);
+      Utilities.sleep(waitMs);
+      continue;
+    }
+
+    throw new Error(`Błąd Gemini API (HTTP ${responseCode}, model=${model}): ${responseText}`);
   }
 
+  throw new Error(`Błąd Gemini API: przekroczono liczbę prób (${GEMINI_MAX_RETRIES})`);
+}
+
+function parsujOdpowiedzGemini_(responseText) {
   const resJson = JSON.parse(responseText);
   const text    = resJson?.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || null;
 
@@ -283,4 +308,26 @@ If reading is unclear, return:
     type:  parsed.type  ?? "UNKNOWN",
     value: parsed.value ?? null
   };
+}
+
+function wyciagnijRetryDelayMs_(responseText) {
+  try {
+    const errJson = JSON.parse(responseText);
+    const retryDelay = errJson?.error?.details
+      ?.find(d => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo')
+      ?.retryDelay;
+
+    if (!retryDelay) {
+      return null;
+    }
+
+    const seconds = parseFloat(String(retryDelay).replace('s', ''));
+    if (isNaN(seconds) || seconds <= 0) {
+      return null;
+    }
+
+    return Math.ceil(seconds * 1000) + 1000;
+  } catch (e) {
+    return null;
+  }
 }
