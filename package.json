@@ -1,0 +1,18 @@
+{
+  "name": "billings",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Apps Script – odczyt liczników mediów (prąd, woda, c.o.) ze zdjęć",
+  "scripts": {
+    "login": "clasp login",
+    "pull": "clasp pull",
+    "push": "clasp push",
+    "open": "clasp open",
+    "deploy": "clasp deploy",
+    "run": "clasp run przetworzNoweLiczniki"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0",
+    "@types/google-apps-script": "^1.0.97"
+  }
+}
