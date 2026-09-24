@@ -39,9 +39,10 @@ const COL_FILE_ID   = 6;  // F – used for deduplication
 const COL_FILE_URL  = 7;  // G
 
 // ── Gemini ────────────────────────────────────────────────────────────────────
-const GEMINI_MODEL_DEFAULT = 'gemini-3.5-flash';
-const GEMINI_MAX_RETRIES   = 3;
-const GEMINI_DELAY_MS      = 5000; // pause between images to stay within RPM limits
+const GEMINI_MODEL_DEFAULT   = 'gemini-3.5-flash';
+const GEMINI_API_MAX_ATTEMPTS = 6;   // pierwsze wywołanie + do 5 ponowień przy przeciążeniu
+const GEMINI_RETRY_PAUSE_MS   = 8000; // ~8 s przed kolejną próbą (503/502/500); rośnie z numerem próby
+const GEMINI_DELAY_MS         = 5000; // pauza między różnymi zdjęciami (limit RPM)
 
 function getGeminiModel_() {
   return PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || GEMINI_MODEL_DEFAULT;
@@ -499,7 +500,7 @@ If reading is unclear, return:
     muteHttpExceptions: true
   };
 
-  for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= GEMINI_API_MAX_ATTEMPTS; attempt++) {
     const response     = UrlFetchApp.fetch(url, options);
     const responseCode = response.getResponseCode();
     const responseText = response.getContentText();
@@ -508,9 +509,13 @@ If reading is unclear, return:
       return parsujOdpowiedzGemini_(responseText);
     }
 
-    if (responseCode === 429 && attempt < GEMINI_MAX_RETRIES) {
-      const waitMs = wyciagnijRetryDelayMs_(responseText) || (attempt * 30000);
-      Logger.log(`Gemini 429 (${model}), próba ${attempt}/${GEMINI_MAX_RETRIES}, czekam ${waitMs}ms`);
+    const moznaPonowic = czyPonowicProbeGemini_(responseCode) && attempt < GEMINI_API_MAX_ATTEMPTS;
+    if (moznaPonowic) {
+      const waitMs = obliczGeminiRetryDelayMs_(responseCode, attempt, responseText);
+      Logger.log(
+        `Gemini HTTP ${responseCode} (${model}): czekam ${Math.round(waitMs / 1000)} s, ` +
+        `ponawiam (${attempt + 1}/${GEMINI_API_MAX_ATTEMPTS})…`
+      );
       Utilities.sleep(waitMs);
       continue;
     }
@@ -518,7 +523,7 @@ If reading is unclear, return:
     throw new Error(`Błąd Gemini API (HTTP ${responseCode}, model=${model}): ${responseText}`);
   }
 
-  throw new Error(`Błąd Gemini API: przekroczono liczbę prób (${GEMINI_MAX_RETRIES})`);
+  throw new Error(`Błąd Gemini API: przekroczono liczbę prób (${GEMINI_API_MAX_ATTEMPTS})`);
 }
 
 function parsujOdpowiedzGemini_(responseText) {
@@ -540,6 +545,18 @@ function parsujOdpowiedzGemini_(responseText) {
     type:  parsed.type  ?? "UNKNOWN",
     value: parsed.value ?? null
   };
+}
+
+function czyPonowicProbeGemini_(responseCode) {
+  return responseCode === 429 || responseCode === 503 || responseCode === 502 || responseCode === 500;
+}
+
+function obliczGeminiRetryDelayMs_(responseCode, attempt, responseText) {
+  if (responseCode === 429) {
+    return wyciagnijRetryDelayMs_(responseText) || (attempt * GEMINI_RETRY_PAUSE_MS);
+  }
+  // 503 UNAVAILABLE itp. — odczekaj kilka sekund, potem dłużej przy kolejnych próbach
+  return Math.min(attempt * GEMINI_RETRY_PAUSE_MS, 60000);
 }
 
 function wyciagnijRetryDelayMs_(responseText) {
