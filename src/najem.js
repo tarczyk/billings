@@ -83,12 +83,63 @@ function konfigurujTrigger() {
 
 // ── Main entry point ──────────────────────────────────────────────────────────
 
+function otworzFolderDrive_(etykieta, folderId) {
+  try {
+    return DriveApp.getFolderById(folderId);
+  } catch (e) {
+    throw new Error(
+      `${etykieta}: brak folderu w Drive lub brak uprawnień (id=${folderId}). ` +
+      'Udostępnij folder kontu, które uruchamia Apps Script (Edytor → uruchom jako). ' +
+      `Drive: ${e.message || e}`
+    );
+  }
+}
+
+function otworzArkuszPoId_(etykieta, spreadsheetId) {
+  try {
+    return SpreadsheetApp.openById(spreadsheetId);
+  } catch (e) {
+    throw new Error(
+      `${etykieta}: brak arkusza lub brak uprawnień (id=${spreadsheetId}). ` +
+      'Otwórz plik w Drive tym samym kontem Google co projekt Apps Script. ' +
+      `Sheets: ${e.message || e}`
+    );
+  }
+}
+
+/**
+ * Uruchom ręcznie z edytora Apps Script — sprawdza dostęp do wszystkich folderów i arkuszy.
+ */
+function diagnostykaZasobow() {
+  const zasoby = [
+    { rodzaj: 'folder', etykieta: 'odczyty-archiwum', id: FOLDER_ARCHIWUM_ID },
+    { rodzaj: 'folder', etykieta: 'odczyty-bierzace', id: FOLDER_BIERZACE_ID },
+    ...METER_FOLDERS.map(m => ({ rodzaj: 'folder', etykieta: `licznik/${m.name}`, id: m.id })),
+    { rodzaj: 'arkusz', etykieta: 'odczyty-rozpoznane', id: SPREADSHEET_ID },
+    { rodzaj: 'arkusz', etykieta: 'Rozliczenia_najem', id: ROZLICZENIA_SPREADSHEET_ID }
+  ];
+
+  for (const z of zasoby) {
+    try {
+      if (z.rodzaj === 'folder') {
+        const folder = DriveApp.getFolderById(z.id);
+        Logger.log(`OK  folder  ${z.etykieta}: "${folder.getName()}" (${z.id})`);
+      } else {
+        const ss = SpreadsheetApp.openById(z.id);
+        Logger.log(`OK  arkusz  ${z.etykieta}: "${ss.getName()}" (${z.id})`);
+      }
+    } catch (e) {
+      Logger.log(`BŁĄD ${z.rodzaj} ${z.etykieta} (${z.id}): ${e.message || e}`);
+    }
+  }
+}
+
 function przetworzNoweLiczniki() {
-  const folderArchiwum = DriveApp.getFolderById(FOLDER_ARCHIWUM_ID);
-  const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const folderArchiwum = otworzFolderDrive_('odczyty-archiwum', FOLDER_ARCHIWUM_ID);
+  const ss    = otworzArkuszPoId_('odczyty-rozpoznane', SPREADSHEET_ID);
   const sheet = ss.getSheets()[0];
 
-  const rozliczeniaSs = SpreadsheetApp.openById(ROZLICZENIA_SPREADSHEET_ID);
+  const rozliczeniaSs = otworzArkuszPoId_('Rozliczenia_najem', ROZLICZENIA_SPREADSHEET_ID);
   const rozliczeniaSheet = rozliczeniaSs.getSheetByName(ROZLICZENIA_ODCZYTY_SHEET);
   const rozliczeniaLogSheet = rozliczeniaSs.getSheetByName(ROZLICZENIA_LOG_SHEET);
   if (!rozliczeniaSheet) {
@@ -105,7 +156,14 @@ function przetworzNoweLiczniki() {
   const bledy  = []; // { meter, plik, powod }
 
   for (const meter of METER_FOLDERS) {
-    const folder = DriveApp.getFolderById(meter.id);
+    let folder;
+    try {
+      folder = otworzFolderDrive_(`licznik/${meter.name}`, meter.id);
+    } catch (e) {
+      bledy.push({ meter: meter.name, plik: '-', powod: e.message || String(e) });
+      Logger.log(e.message || e);
+      continue;
+    }
     const files  = folder.getFiles();
 
     while (files.hasNext()) {
