@@ -1,14 +1,10 @@
 // ── Folder IDs ───────────────────────────────────────────────────────────────
-const FOLDER_BIERZACE_ID  = "1fwWnW-4rjydwenxvaNsWyAVM0orXR9Fk"; // odczyty-bierzace
+const FOLDER_BIEZACE_ID  = "1fwWnW-4rjydwenxvaNsWyAVM0orXR9Fk"; // odczyty-biezace
 const FOLDER_ARCHIWUM_ID  = "1VZbGt-XnOnMOl5A2jDSdF7ucxUXzPqQt"; // odczyty-archiwum
 
-// Explicit subfolder IDs – iterate only known meter folders
-const METER_FOLDERS = [
-  { id: "1wV0atUHPEhxLYtx7aJ-j9nOyV-eBQWnN", name: "c.o.",        type: "CO"          },
-  { id: "1sro0UEJbEZHTgt_mzYeWMsfc5LI4IHgJ", name: "prad",        type: "PRAD"        },
-  { id: "1atvjqInc4NSCGq9oIcDBm2qWK_olf0C9", name: "woda-zimna",  type: "WODA_ZIMNA"  },
-  { id: "1fbakwV390nbu8snUzA4BKzOXKE778dME", name: "woda-ciepla", type: "WODA_CIEPLA" }
-];
+const FOLDER_BIEZACE_LABEL = 'odczyty-biezace';
+
+const VALID_METER_TYPES = ['CO', 'PRAD', 'WODA_ZIMNA', 'WODA_CIEPLA'];
 
 // ── Spreadsheet IDs ───────────────────────────────────────────────────────────
 const SPREADSHEET_ID = "14oxXC2s_ubqfbPxeYd2hg5WZPODmfLuNUIHxYx8OtjI"; // odczyty-rozpoznane.gsheet
@@ -107,14 +103,33 @@ function otworzArkuszPoId_(etykieta, spreadsheetId) {
   }
 }
 
+function normalizeMeterType_(rawType) {
+  const t = (rawType || '').toString().trim().toUpperCase();
+  if (VALID_METER_TYPES.indexOf(t) === -1) {
+    return null;
+  }
+  return t;
+}
+
+function etykietaLicznika_(meterType) {
+  const map = {
+    CO:          'c.o.',
+    PRAD:        'prad',
+    WODA_ZIMNA:  'woda-zimna',
+    WODA_CIEPLA: 'woda-ciepla'
+  };
+  return map[meterType] || meterType;
+}
+
 /**
  * Uruchom ręcznie z edytora Apps Script — sprawdza dostęp do wszystkich folderów i arkuszy.
  */
 function diagnostykaZasobow() {
+  Logger.log(`Konto wykonujące: ${Session.getEffectiveUser().getEmail()}`);
+
   const zasoby = [
     { rodzaj: 'folder', etykieta: 'odczyty-archiwum', id: FOLDER_ARCHIWUM_ID },
-    { rodzaj: 'folder', etykieta: 'odczyty-bierzace', id: FOLDER_BIERZACE_ID },
-    ...METER_FOLDERS.map(m => ({ rodzaj: 'folder', etykieta: `licznik/${m.name}`, id: m.id })),
+    { rodzaj: 'folder', etykieta: 'odczyty-biezace', id: FOLDER_BIEZACE_ID },
     { rodzaj: 'arkusz', etykieta: 'odczyty-rozpoznane', id: SPREADSHEET_ID },
     { rodzaj: 'arkusz', etykieta: 'Rozliczenia_najem', id: ROZLICZENIA_SPREADSHEET_ID }
   ];
@@ -131,6 +146,22 @@ function diagnostykaZasobow() {
     } catch (e) {
       Logger.log(`BŁĄD ${z.rodzaj} ${z.etykieta} (${z.id}): ${e.message || e}`);
     }
+  }
+
+  try {
+    const biezace = DriveApp.getFolderById(FOLDER_BIEZACE_ID);
+    let obrazy = 0;
+    const pliki = biezace.getFiles();
+    while (pliki.hasNext()) {
+      const f = pliki.next();
+      const mime = f.getMimeType();
+      if (mime && mime.indexOf('image/') === 0) {
+        obrazy += 1;
+      }
+    }
+    Logger.log(`OK  odczyty-biezace: ${obrazy} zdjęć do przetworzenia (typ rozpoznaje Gemini)`);
+  } catch (e) {
+    Logger.log(`BŁĄD odczyty-biezace: ${e.message || e}`);
   }
 }
 
@@ -155,96 +186,90 @@ function przetworzNoweLiczniki() {
   const wyniki = []; // { meter, plik, wartosc, archiwumNazwa }
   const bledy  = []; // { meter, plik, powod }
 
-  for (const meter of METER_FOLDERS) {
-    let folder;
-    try {
-      folder = otworzFolderDrive_(`licznik/${meter.name}`, meter.id);
-    } catch (e) {
-      bledy.push({ meter: meter.name, plik: '-', powod: e.message || String(e) });
-      Logger.log(e.message || e);
+  const folderBiezace = otworzFolderDrive_('odczyty-biezace', FOLDER_BIEZACE_ID);
+  const files          = folderBiezace.getFiles();
+
+  while (files.hasNext()) {
+    const file     = files.next();
+    const mimeType = file.getMimeType();
+
+    if (!mimeType || mimeType.indexOf('image/') !== 0) {
       continue;
     }
-    const files  = folder.getFiles();
 
-    while (files.hasNext()) {
-      const file     = files.next();
-      const mimeType = file.getMimeType();
+    const fileId   = file.getId();
+    const fileName = file.getName();
 
-      if (!mimeType || mimeType.indexOf('image/') !== 0) {
+    if (processedFileIds.has(fileId)) {
+      Logger.log(`Pominięto (już przetworzony): ${fileName} [${fileId}]`);
+      continue;
+    }
+
+    const meterLabelFallback = FOLDER_BIEZACE_LABEL;
+
+    try {
+      const blob        = file.getBlob();
+      const base64Image = Utilities.base64Encode(blob.getBytes());
+      const odczyt      = analizujZdjecieGemini(base64Image, mimeType);
+
+      Utilities.sleep(GEMINI_DELAY_MS);
+
+      const meterType = normalizeMeterType_(odczyt.type);
+      const wartosc   = Number(odczyt.value);
+      const meterLabel = meterType ? etykietaLicznika_(meterType) : meterLabelFallback;
+
+      if (!meterType || isNaN(wartosc) || wartosc === null) {
+        throw new Error(`Nieprawidłowy wynik Gemini: ${JSON.stringify(odczyt)}`);
+      }
+
+      const ostatniOdczyt = lastValueByType[meterType];
+      if (ostatniOdczyt !== undefined && wartosc <= ostatniOdczyt) {
+        bledy.push({
+          meter: meterLabel,
+          plik: fileName,
+          powod: `Odczyt ${wartosc} nie jest wyższy od ostatniego (${ostatniOdczyt}) – pominięto`
+        });
+        Logger.log(`Pominięto (nie nowy stan): ${fileName}, ${meterType}: ${wartosc} <= ${ostatniOdczyt}`);
         continue;
       }
 
-      const fileId   = file.getId();
-      const fileName = file.getName();
+      const teraz      = new Date();
+      const formatData = Utilities.formatDate(teraz, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
+      const noweImie   = `${formatData}_${meterType.toLowerCase()}_${fileId.slice(0, 8)}.jpg`;
 
-      if (processedFileIds.has(fileId)) {
-        Logger.log(`Pominięto (już przetworzony): ${fileName} [${fileId}]`);
-        continue;
-      }
-
+      sheet.appendRow([teraz, meterType, wartosc, FOLDER_BIEZACE_LABEL, fileName, fileId, file.getUrl()]);
       try {
-        const blob        = file.getBlob();
-        const base64Image = Utilities.base64Encode(blob.getBytes());
-        const odczyt      = analizujZdjecieGemini(base64Image, mimeType);
-
-        Utilities.sleep(GEMINI_DELAY_MS);
-
-        const meterType = meter.type;
-        const wartosc   = Number(odczyt.value);
-
-        if (!meterType || isNaN(wartosc) || wartosc === null) {
-          throw new Error(`Nieprawidłowy wynik Gemini: ${JSON.stringify(odczyt)}`);
-        }
-
-        const ostatniOdczyt = lastValueByType[meterType];
-        if (ostatniOdczyt !== undefined && wartosc <= ostatniOdczyt) {
-          bledy.push({
-            meter: meter.name,
-            plik: fileName,
-            powod: `Odczyt ${wartosc} nie jest wyższy od ostatniego (${ostatniOdczyt}) – pominięto`
-          });
-          Logger.log(`Pominięto (nie nowy stan): ${fileName}, ${meterType}: ${wartosc} <= ${ostatniOdczyt}`);
-          continue;
-        }
-
-        const teraz      = new Date();
-        const formatData = Utilities.formatDate(teraz, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
-        const noweImie   = `${formatData}_${meterType.toLowerCase()}_${fileId.slice(0, 8)}.jpg`;
-
-        sheet.appendRow([teraz, meterType, wartosc, meter.name, fileName, fileId, file.getUrl()]);
-        try {
-          dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, istniejaceKluczeOdczytyRozliczenia);
-        } catch (syncErr) {
-          const powod = syncErr.message || String(syncErr);
-          bledy.push({
-            meter: meter.name,
-            plik: fileName,
-            powod: `Zapis do Rozliczenia_najem/Odczyty: ${powod}`
-          });
-          Logger.log(`Rozliczenia_najem sync błąd: ${fileName}: ${syncErr}`);
-          dopiszBladSyncDoLogRozliczenia_(
-            rozliczeniaLogSheet,
-            teraz,
-            meterType,
-            fileName,
-            fileId,
-            powod
-          );
-        }
-
-        lastValueByType[meterType] = wartosc;
-        processedFileIds.add(fileId);
-
-        file.setName(noweImie);
-        file.moveTo(folderArchiwum);
-
-        wyniki.push({ meter: meter.name, plik: fileName, wartosc, archiwumNazwa: noweImie });
-        Logger.log(`OK: ${meter.name} → ${wartosc} | ${noweImie}`);
-
-      } catch (e) {
-        bledy.push({ meter: meter.name, plik: fileName, powod: e.message || String(e) });
-        Logger.log(`Błąd: ${fileName} (${meter.name}): ${e}`);
+        dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, istniejaceKluczeOdczytyRozliczenia);
+      } catch (syncErr) {
+        const powod = syncErr.message || String(syncErr);
+        bledy.push({
+          meter: meterLabel,
+          plik: fileName,
+          powod: `Zapis do Rozliczenia_najem/Odczyty: ${powod}`
+        });
+        Logger.log(`Rozliczenia_najem sync błąd: ${fileName}: ${syncErr}`);
+        dopiszBladSyncDoLogRozliczenia_(
+          rozliczeniaLogSheet,
+          teraz,
+          meterType,
+          fileName,
+          fileId,
+          powod
+        );
       }
+
+      lastValueByType[meterType] = wartosc;
+      processedFileIds.add(fileId);
+
+      file.setName(noweImie);
+      file.moveTo(folderArchiwum);
+
+      wyniki.push({ meter: meterLabel, plik: fileName, wartosc, archiwumNazwa: noweImie });
+      Logger.log(`OK: ${meterLabel} (${meterType}) → ${wartosc} | ${noweImie}`);
+
+    } catch (e) {
+      bledy.push({ meter: meterLabelFallback, plik: fileName, powod: e.message || String(e) });
+      Logger.log(`Błąd: ${fileName}: ${e}`);
     }
   }
 
@@ -260,10 +285,10 @@ function wyslijRaport_(wyniki, bledy) {
   const rozliczeniaUrl = `https://docs.google.com/spreadsheets/d/${ROZLICZENIA_SPREADSHEET_ID}`;
 
   const labelMap = {
-    CO:          'C.O.',
-    PRAD:        'Prąd',
-    WODA_ZIMNA:  'Woda zimna',
-    WODA_CIEPLA: 'Woda ciepła'
+    'c.o.':        'C.O.',
+    'prad':        'Prąd',
+    'woda-zimna':  'Woda zimna',
+    'woda-ciepla': 'Woda ciepła'
   };
 
   let body = `Raport odczytu liczników – ${teraz}\n\n`;
