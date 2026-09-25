@@ -1,15 +1,6 @@
 name: Deploy to Google Apps Script
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - '.clasp.json'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/deploy-gas.yml'
   workflow_dispatch:
 
 concurrency:

@@ -7,12 +7,16 @@
     "login": "clasp login",
     "pull": "clasp pull",
     "push": "clasp push",
-    "open": "clasp open",
+    "open": "clasp open-script",
     "deploy": "clasp deploy",
-    "run": "clasp run przetworzNoweLiczniki"
+    "run": "clasp run przetworzNoweLiczniki",
+    "rozliczenia:status": "clasp -P bound-scripts/rozliczenie-najem show-file-status",
+    "rozliczenia:pull": "clasp -P bound-scripts/rozliczenie-najem pull",
+    "rozliczenia:push": "clasp -P bound-scripts/rozliczenie-najem push",
+    "rozliczenia:open": "clasp -P bound-scripts/rozliczenie-najem open-script"
   },
   "devDependencies": {
-    "@google/clasp": "^3.3.0",
+    "@google/clasp": "^3.4.1",
     "@types/google-apps-script": "^1.0.97"
   }
 }

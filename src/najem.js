@@ -64,8 +64,10 @@ function getGeminiApiKey_() {
  * Existing triggers for the same function are removed first to avoid duplicates.
  */
 function konfigurujTrigger() {
+  // Usuń też stare onOpen (jeśli były), żeby nie zostawały w projekcie po cofnięciu tej funkcji.
+  const usunHandlery = ['przetworzNoweLiczniki', 'przyOtwarciuRozliczenia', 'przyOtwarciuOdczytyRozpoznane'];
   ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === 'przetworzNoweLiczniki')
+    .filter(t => usunHandlery.indexOf(t.getHandlerFunction()) >= 0)
     .forEach(t => ScriptApp.deleteTrigger(t));
 
   ScriptApp.newTrigger('przetworzNoweLiczniki')
@@ -404,8 +406,7 @@ function wczytajIstniejaceKluczeOdczytyRozliczenia_(sheet) {
     return keys;
   }
 
-  const numRows = lastRow - ROZL_DATA_START_ROW + 1;
-  const rows = sheet.getRange(ROZL_DATA_START_ROW, ROZL_COL_DATA, numRows, 4).getValues();
+  const rows = sheet.getRange(`B${ROZL_DATA_START_ROW}:E${lastRow}`).getValues();
   for (const row of rows) {
     const dataWizyty = formatDataKomorkiRozliczenia_(row[0]);
     const medium     = (row[2] || '').toString().trim();
@@ -415,6 +416,32 @@ function wczytajIstniejaceKluczeOdczytyRozliczenia_(sheet) {
     }
   }
   return keys;
+}
+
+/** Nowy wiersz musi mieć format jak wiersz powyżej — inaczej w arkuszu „Calm Density” dane są, ale niewidoczne. */
+function skopiujFormatWierszaZRzeduPowyzej_(sheet, nextRow, colStart, colEnd, minDataRow) {
+  if (nextRow <= minDataRow) {
+    return;
+  }
+  const prevRange = sheet.getRange(`${colStart}${nextRow - 1}:${colEnd}${nextRow - 1}`);
+  const destRange = sheet.getRange(`${colStart}${nextRow}:${colEnd}${nextRow}`);
+  prevRange.copyTo(destRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+}
+
+/**
+ * Jednorazowo: format wierszy Odczyty od wiersza 5 w dół = jak wiersz bezpośrednio nad nimi.
+ * Uruchom ręcznie, jeśli wcześniejsze wpisy automatu były „niewidoczne”.
+ */
+function naprawStylWierszyOdczyty() {
+  const sheet = SpreadsheetApp.openById(ROZLICZENIA_SPREADSHEET_ID).getSheetByName(ROZLICZENIA_ODCZYTY_SHEET);
+  if (!sheet) {
+    throw new Error(`Brak arkusza "${ROZLICZENIA_ODCZYTY_SHEET}".`);
+  }
+  const lastRow = sheet.getLastRow();
+  for (let row = ROZL_DATA_START_ROW + 1; row <= lastRow; row++) {
+    skopiujFormatWierszaZRzeduPowyzej_(sheet, row, 'B', 'G', ROZL_DATA_START_ROW);
+  }
+  Logger.log(`Odczyty: skopiowano format wierszy ${ROZL_DATA_START_ROW + 1}–${lastRow} z wiersza powyżej.`);
 }
 
 function dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, existingKeys) {
@@ -431,13 +458,63 @@ function dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, e
   }
 
   const nextRow = rozliczeniaSheet.getLastRow() + 1;
-  const colCount = ROZL_COL_STATUS - ROZL_COL_DATA + 1;
-  rozliczeniaSheet
-    .getRange(nextRow, ROZL_COL_DATA, 1, colCount)
-    .setValues([[dataWizyty, idWizyty, medium, stan, jednostka, 'OK']]);
+  const destRange = rozliczeniaSheet.getRange(`B${nextRow}:G${nextRow}`);
+  skopiujFormatWierszaZRzeduPowyzej_(rozliczeniaSheet, nextRow, 'B', 'G', ROZL_DATA_START_ROW);
+  destRange.setValues([[dataWizyty, idWizyty, medium, stan, jednostka, 'OK']]);
 
   existingKeys.add(key);
   Logger.log(`Rozliczenia_najem/Odczyty: ${medium} = ${stan} ${jednostka} (${idWizyty})`);
+}
+
+/**
+ * Porównuje odczyty-rozpoznane z Rozliczenia_najem/Odczyty (klucz: data + medium + stan).
+ * Uruchom ręcznie z edytora Apps Script — wynik w Dzienniku.
+ */
+function sprawdzSynchronizacjeOdczytow() {
+  const sheetZrodlo = SpreadsheetApp.openById(SPREADSHEET_ID).getSheets()[0];
+  const rozliczeniaSheet = SpreadsheetApp.openById(ROZLICZENIA_SPREADSHEET_ID)
+    .getSheetByName(ROZLICZENIA_ODCZYTY_SHEET);
+  if (!rozliczeniaSheet) {
+    throw new Error(`Brak arkusza "${ROZLICZENIA_ODCZYTY_SHEET}".`);
+  }
+
+  const kluczeRozliczenia = wczytajIstniejaceKluczeOdczytyRozliczenia_(rozliczeniaSheet);
+  const lastRow = sheetZrodlo.getLastRow();
+  if (lastRow < 2) {
+    Logger.log('Brak wierszy w odczyty-rozpoznane.');
+    return;
+  }
+
+  const dane = sheetZrodlo.getRange(`A2:G${lastRow}`).getValues();
+  let brakuje = 0;
+  let ok = 0;
+
+  for (const row of dane) {
+    const teraz     = row[COL_DATE - 1];
+    const meterType = (row[COL_TYPE - 1] || '').toString().trim();
+    const wartosc   = Number(row[COL_VALUE - 1]);
+    const plik      = (row[COL_FILENAME - 1] || '').toString();
+
+    if (!meterType || isNaN(wartosc)) {
+      continue;
+    }
+
+    const dataWizyty = teraz instanceof Date
+      ? Utilities.formatDate(teraz, Session.getScriptTimeZone(), 'yyyy-MM-dd')
+      : formatDataKomorkiRozliczenia_(teraz);
+    const { medium } = mapTypNaRozliczeniaMedium_(meterType);
+    const stan = stanDlaRozliczenia_(meterType, wartosc);
+    const key  = kluczOdczytuRozliczenia_(dataWizyty, medium, stan);
+
+    if (kluczeRozliczenia.has(key)) {
+      ok += 1;
+    } else {
+      brakuje += 1;
+      Logger.log(`BRAK w Odczyty: ${dataWizyty} ${medium} ${stan} (źródło: ${plik}, typ ${meterType})`);
+    }
+  }
+
+  Logger.log(`Synchronizacja: ${ok} zgodnych, ${brakuje} brakujących w Rozliczenia_najem/Odczyty.`);
 }
 
 function dopiszBladSyncDoLogRozliczenia_(logSheet, teraz, meterType, fileName, fileId, powod) {
@@ -449,10 +526,9 @@ function dopiszBladSyncDoLogRozliczenia_(logSheet, teraz, meterType, fileName, f
 
   try {
     const nextRow = logSheet.getLastRow() + 1;
-    const colCount = LOG_COL_SKORYGOWANO - LOG_COL_DATA + 1;
-    logSheet
-      .getRange(nextRow, LOG_COL_DATA, 1, colCount)
-      .setValues([[dataLog, idWizyty, medium, opis, 'NIE']]);
+    const destRange = logSheet.getRange(`B${nextRow}:F${nextRow}`);
+    skopiujFormatWierszaZRzeduPowyzej_(logSheet, nextRow, 'B', 'F', LOG_DATA_START_ROW);
+    destRange.setValues([[dataLog, idWizyty, medium, opis, 'NIE']]);
     Logger.log(`Rozliczenia_najem/Log: zapisano błąd sync dla ${fileName}`);
   } catch (logErr) {
     Logger.log(`Nie udało się zapisać do Log: ${logErr.message || logErr}`);

@@ -1,21 +1,25 @@
 # billings
 
-Odczyt stanu liczników mediów (prąd, woda zimna/ciepła, c.o.) ze zdjęć w Google Drive, z zapisem do arkusza Google Sheets. Rozpoznawanie przez Gemini API.
+Odczyt stanu liczników mediów (prąd, woda zimna/ciepła, c.o.) ze zdjęć w Google Drive, z zapisem do arkusza Google Sheets i automatycznym rozliczeniem w arkuszu najmu. Rozpoznawanie przez Gemini API.
 
 ## Architektura
 
 ```
-Google Drive (folder surowe)
-  ├── prad/           → zdjęcia licznika prądu
-  ├── woda-zimna/
-  ├── woda-ciepla/
-  └── c.o./
+Google Drive (folder odczyty-biezace, płasko – bez podfolderów)
+  └── zdjęcia liczników (typ rozpoznaje Gemini, nie nazwa folderu)
          ↓  przetworzNoweLiczniki()
-    Gemini API (OCR + klasyfikacja)
+    Gemini API (OCR + klasyfikacja: PRAD / WODA_ZIMNA / WODA_CIEPLA / CO)
          ↓
-Google Sheets (wiersz: data, typ, wartość, folder, plik, URL)
+    walidacja: odczyt musi być wyższy niż ostatni zapisany dla danego typu
          ↓
-Google Drive (folder archiwum) – przemianowany plik
+Google Sheets „odczyty-rozpoznane” (wiersz: data, typ, wartość, folder, plik, fileId, URL)
+         ↓
+Google Sheets „Rozliczenia_najem” → zakładka „Odczyty” (dopisanie odczytu, dedup po dacie+medium+stanie)
+         │        (błąd zapisu → zakładka „Log”)
+         ↓
+Google Drive (folder odczyty-archiwum) – plik przemianowany na `{data}_{typ}_{fileId8}.jpg`
+         ↓
+E-mail z raportem (przetworzone / problemy) na konto wykonujące skrypt
 ```
 
 ## Wymagania
@@ -36,6 +40,7 @@ Ustaw klucz API w Google Apps Script (nie trzymaj go w kodzie):
 1. Otwórz projekt: `npm run open`
 2. **Projekt → Ustawienia projektu → Właściwości skryptu**
 3. Dodaj: `GEMINI_API_KEY` = twój klucz z Google AI Studio
+4. Opcjonalnie: `GEMINI_MODEL` = nazwa modelu (domyślnie `gemini-3.5-flash`)
 
 ## CI/CD – GitHub → Google Apps Script
 
@@ -90,16 +95,37 @@ Typowy cykl z Copilotem: edycja w GitHub → commit + push na `main` → Actions
 
 | Plik | Opis |
 |------|------|
-| `najem.js` | Główna logika: skan folderów, analiza Gemini, zapis do arkusza |
+| `najem.js` | Główna logika: skan folderu, analiza Gemini, zapis do arkusza, sync z Rozliczenia_najem, raport e-mail |
 | `appsscript.json` | Manifest (strefa czasowa, runtime V8) |
+
+## Funkcje w `najem.js`
+
+| Funkcja | Przeznaczenie |
+|---------|---------------|
+| `przetworzNoweLiczniki()` | Główna funkcja wejściowa – przetwarza nowe zdjęcia (patrz architektura powyżej) |
+| `konfigurujTrigger()` | Uruchom raz ręcznie – ustawia trigger czasowy: `przetworzNoweLiczniki` codziennie o 20:00 |
+| `diagnostykaZasobow()` | Uruchom ręcznie – sprawdza dostęp do folderów/arkuszy i liczbę zdjęć czekających na przetworzenie |
+| `sprawdzSynchronizacjeOdczytow()` | Uruchom ręcznie – porównuje „odczyty-rozpoznane” z „Rozliczenia_najem/Odczyty” (klucz: data + medium + stan), wynik w Dzienniku |
+| `naprawStylWierszyOdczyty()` | Uruchom ręcznie, jednorazowo – naprawia formatowanie wierszy w „Rozliczenia_najem/Odczyty” (kopiuje styl z wiersza powyżej) |
 
 ## Uruchomienie w arkuszu
 
-Funkcja wejściowa: `przetworzNoweLiczniki()`. Można ją przypiąć do menu niestandardowego lub triggera czasowego w edytorze Apps Script.
+Funkcja wejściowa: `przetworzNoweLiczniki()`. Można ją przypiąć do menu niestandardowego lub uruchomić `konfigurujTrigger()` (trigger czasowy, codziennie 20:00).
 
-## ID folderów Drive
+Po każdym uruchomieniu skrypt wysyła e-mail z podsumowaniem (przetworzone odczyty + ewentualne problemy) na konto wykonujące skrypt.
+
+## Walidacja odczytów
+
+- Typ licznika rozpoznaje Gemini na podstawie treści zdjęcia (nie nazwa folderu/podfolderu).
+- Nowy odczyt musi być **wyższy** niż ostatnia zapisana wartość dla danego typu – w przeciwnym razie jest odrzucany i zgłaszany jako problem w raporcie.
+- Odczyty CO w arkuszu „odczyty-rozpoznane” są ×1000 względem wartości w GJ zapisywanej do „Rozliczenia_najem” (przelicznik w `stanDlaRozliczenia_`).
+- Deduplikacja: po `fileId` (plik już przetworzony) oraz po kluczu data+medium+stan (wpis w Rozliczenia_najem/Odczyty).
+
+## ID folderów i arkuszy Drive
 
 Skonfigurowane w `najem.js`:
 
-- **Surowe** – zdjęcia do przetworzenia (podfoldery wg typu medium)
-- **Archiwum** – przetworzone pliki z nową nazwą
+- **`FOLDER_BIEZACE_ID`** (odczyty-biezace) – zdjęcia do przetworzenia, folder płaski (bez podfolderów wg medium)
+- **`FOLDER_ARCHIWUM_ID`** (odczyty-archiwum) – przetworzone pliki z nową nazwą
+- **`SPREADSHEET_ID`** (odczyty-rozpoznane) – log wszystkich rozpoznanych odczytów
+- **`ROZLICZENIA_SPREADSHEET_ID`** (Rozliczenia_najem) – docelowy arkusz rozliczeniowy, zakładki `Odczyty` i `Log`

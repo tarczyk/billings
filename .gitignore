@@ -4,3 +4,7 @@ node_modules/
 # OS / editor
 .DS_Store
 *.log
+*.code-workspace
+
+# clasp (local OAuth — never commit)
+.clasprc.json
