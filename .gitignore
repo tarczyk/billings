@@ -8,3 +8,6 @@ node_modules/
 
 # clasp (local OAuth — never commit)
 .clasprc.json
+
+# n8n sample source documents (contain personal data)
+n8n/samples/
