@@ -1,5 +1,5 @@
 ---
-name: rental-settlement-sheet
+name: rental-sheet
 description: Maintains the rental-settlement Google Sheet and its Git-backed Apps Script. Use for formula, layout, formatting, validation, trigger, automation, or data-flow changes involving that workbook.
 ---
 
