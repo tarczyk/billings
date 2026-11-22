@@ -4,6 +4,7 @@
   "private": true,
   "description": "Google Apps Script – odczyt liczników mediów (prąd, woda, c.o.) ze zdjęć",
   "scripts": {
+    "test": "node --test",
     "login": "clasp login",
     "pull": "clasp pull",
     "push": "clasp push",

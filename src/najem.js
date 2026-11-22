@@ -236,13 +236,18 @@ function przetworzNoweLiczniki() {
         continue;
       }
 
-      const teraz      = new Date();
+      const teraz      = new Date(); // moment przetworzenia — tylko do loga odczyty-rozpoznane i nazwy archiwum.
       const formatData = Utilities.formatDate(teraz, Session.getScriptTimeZone(), 'yyyy-MM-dd_HH-mm-ss');
       const noweImie   = `${formatData}_${meterType.toLowerCase()}_${fileId.slice(0, 8)}.jpg`;
 
+      // Data/ID_wizyty w Rozliczenia_najem muszą pochodzić z daty utworzenia zdjęcia, nie z dnia
+      // przetworzenia (ADR 0003, issue #3 seam 2) — inaczej zdjęcie z 31.07 przetworzone 01.08
+      // trafiłoby do V-2026-08 zamiast V-2026-07.
+      const dataUtworzeniaZdjecia = file.getDateCreated();
+
       sheet.appendRow([teraz, meterType, wartosc, FOLDER_BIEZACE_LABEL, fileName, fileId, file.getUrl()]);
       try {
-        dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, istniejaceKluczeOdczytyRozliczenia);
+        dopiszOdczytDoRozliczen_(rozliczeniaSheet, dataUtworzeniaZdjecia, meterType, wartosc, istniejaceKluczeOdczytyRozliczenia);
       } catch (syncErr) {
         const powod = syncErr.message || String(syncErr);
         bledy.push({
@@ -253,7 +258,7 @@ function przetworzNoweLiczniki() {
         Logger.log(`Rozliczenia_najem sync błąd: ${fileName}: ${syncErr}`);
         dopiszBladSyncDoLogRozliczenia_(
           rozliczeniaLogSheet,
-          teraz,
+          dataUtworzeniaZdjecia,
           meterType,
           fileName,
           fileId,
@@ -460,10 +465,29 @@ function naprawStylWierszyOdczyty() {
   Logger.log(`Odczyty: skopiowano format wierszy ${ROZL_DATA_START_ROW + 1}–${lastRow} z wiersza powyżej.`);
 }
 
-function dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, existingKeys) {
+/**
+ * Czysta funkcja (bez zależności GAS) wyznaczająca `Data` Odczytu i `ID_wizyty` wyłącznie z
+ * daty utworzenia zdjęcia licznika — nigdy z dnia przetworzenia skryptu (ADR 0003, issue #3
+ * seam 2). Przyjmuje datę już sformatowaną jako `yyyy-MM-dd` (w strefie czasowej skryptu),
+ * żeby dało się ją testować w Node bez `Utilities`/`Session`.
+ *
+ * Przykład: zdjęcie utworzone 2026-07-31, przetworzone 2026-08-01 → `{ dataWizyty: '2026-07-31',
+ * idWizyty: 'V-2026-07' }` — miesiąc Wizyty pochodzi z daty zdjęcia, nie z dnia uruchomienia.
+ */
+function wyznaczWizyteZDatyUtworzenia_(dataUtworzeniaYyyyMmDd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataUtworzeniaYyyyMmDd)) {
+    throw new Error(`Nieprawidłowy format daty utworzenia zdjęcia: "${dataUtworzeniaYyyyMmDd}" (oczekiwano yyyy-MM-dd).`);
+  }
+  return {
+    dataWizyty: dataUtworzeniaYyyyMmDd,
+    idWizyty: `V-${dataUtworzeniaYyyyMmDd.slice(0, 7)}`
+  };
+}
+
+function dopiszOdczytDoRozliczen_(rozliczeniaSheet, dataUtworzeniaZdjecia, meterType, wartosc, existingKeys) {
   const tz = Session.getScriptTimeZone();
-  const dataWizyty = Utilities.formatDate(teraz, tz, 'yyyy-MM-dd');
-  const idWizyty   = `V-${Utilities.formatDate(teraz, tz, 'yyyy-MM')}`;
+  const dataWizytyYyyyMmDd = Utilities.formatDate(dataUtworzeniaZdjecia, tz, 'yyyy-MM-dd');
+  const { dataWizyty, idWizyty } = wyznaczWizyteZDatyUtworzenia_(dataWizytyYyyyMmDd);
   const { medium, jednostka } = mapTypNaRozliczeniaMedium_(meterType);
   const stan = stanDlaRozliczenia_(meterType, wartosc);
   const key  = kluczOdczytuRozliczenia_(dataWizyty, medium, stan);
@@ -533,10 +557,10 @@ function sprawdzSynchronizacjeOdczytow() {
   Logger.log(`Synchronizacja: ${ok} zgodnych, ${brakuje} brakujących w Rozliczenia_najem/Odczyty.`);
 }
 
-function dopiszBladSyncDoLogRozliczenia_(logSheet, teraz, meterType, fileName, fileId, powod) {
+function dopiszBladSyncDoLogRozliczenia_(logSheet, dataUtworzeniaZdjecia, meterType, fileName, fileId, powod) {
   const tz = Session.getScriptTimeZone();
-  const dataLog  = Utilities.formatDate(teraz, tz, 'yyyy-MM-dd');
-  const idWizyty = `V-${Utilities.formatDate(teraz, tz, 'yyyy-MM')}`;
+  const dataUtworzeniaYyyyMmDd = Utilities.formatDate(dataUtworzeniaZdjecia, tz, 'yyyy-MM-dd');
+  const { dataWizyty: dataLog, idWizyty } = wyznaczWizyteZDatyUtworzenia_(dataUtworzeniaYyyyMmDd);
   const { medium } = mapTypNaRozliczeniaMedium_(meterType);
   const opis = `Automat (odczyty): zapis do Odczyty nieudany — ${medium}, plik ${fileName}, id ${fileId}. ${powod}`;
 
@@ -671,4 +695,16 @@ function wyciagnijRetryDelayMs_(responseText) {
   } catch (e) {
     return null;
   }
+}
+
+// ── Node test export ─────────────────────────────────────────────────────────
+// Apps Script nie definiuje `module`, więc ta sekcja jest no-opem w środowisku GAS (clasp push
+// wysyła cały plik razem z tym blokiem). Pozwala testować czyste funkcje (bez Utilities/Session)
+// w Node przez `node --test`, patrz src/najem.test.js.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    wyznaczWizyteZDatyUtworzenia_,
+    dopiszOdczytDoRozliczen_,
+    kluczOdczytuRozliczenia_
+  };
 }
