@@ -282,6 +282,11 @@ function przetworzNoweLiczniki() {
 // ── Email report ──────────────────────────────────────────────────────────────
 
 function wyslijRaport_(wyniki, bledy) {
+  if (wyniki.length === 0 && bledy.length === 0) {
+    Logger.log('Brak nowych zdjęć i błędów – email nie wysłany.');
+    return;
+  }
+
   const email   = Session.getEffectiveUser().getEmail();
   const teraz   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
   const arkuszUrl      = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}`;
@@ -295,10 +300,6 @@ function wyslijRaport_(wyniki, bledy) {
   };
 
   let body = `Raport odczytu liczników – ${teraz}\n\n`;
-
-  if (wyniki.length === 0 && bledy.length === 0) {
-    body += 'Brak nowych zdjęć do przetworzenia.\n';
-  }
 
   if (wyniki.length > 0) {
     body += `✅ Przetworzone (${wyniki.length}):\n`;
@@ -319,9 +320,7 @@ function wyslijRaport_(wyniki, bledy) {
 
   const subject = wyniki.length > 0
     ? `✅ Liczniki – ${wyniki.length} nowych odczytów (${teraz})`
-    : bledy.length > 0
-      ? `⚠️ Liczniki – brak nowych odczytów, ${bledy.length} problemów (${teraz})`
-      : `ℹ️ Liczniki – brak nowych zdjęć (${teraz})`;
+    : `⚠️ Liczniki – brak nowych odczytów, ${bledy.length} problemów (${teraz})`;
 
   MailApp.sendEmail({ to: email, subject, body });
   Logger.log(`Email wysłany na ${email}: "${subject}"`);
