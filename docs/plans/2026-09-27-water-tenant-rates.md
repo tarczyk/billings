@@ -1,38 +1,38 @@
-# Plan: water tenant rates and `Ceny media` cleanup
+# Plan: stawki wody dla najemców i porządki w `Ceny media`
 
-Status: approved 2026-09-27, not started. Execute with the `rental-sheet` skill.
+Status: zatwierdzony 2026-09-27, nie rozpoczęty. Wykonywać ze skillem `rental-sheet`.
 
-Read first:
-- `CONTEXT.md` — terms: Pozycja źródłowa / Pozycja najemcy, Stawka najemcy, Ciepła woda, Zaliczka vs Koszt rzeczywisty, Korekta półroczna najemcy, Zasada stabilności dla najemcy.
+Najpierw przeczytaj:
+- `GLOSSARY.md` — terminy: pozycja źródłowa / pozycja najemcy, stawka najemcy, ciepła woda, zaliczka vs koszt rzeczywisty, korekta półroczna najemcy, zasada stabilności dla najemcy.
 - `docs/adr/0001-ceny-media-mirrors-source-documents.md`.
 
-Workbook: `rozliczenie-najem`, id `1vfrt1nmYMXcUie9C8CRCVVN39hfysj8drR24a8VzXDw` (pl_PL locale: `;` as argument separator).
+Skoroszyt: `rozliczenie-najem`, id `1vfrt1nmYMXcUie9C8CRCVVN39hfysj8drR24a8VzXDw` (lokalizacja pl_PL: `;` jako separator argumentów).
 
-## Agreed decisions
+## Ustalenia
 
-1. `Ceny media` holds source items only: names and rates 1:1 from cooperative statements and Tauron invoices. No sums, no VAT, no margin.
-2. `Faktury` holds actual costs from settlements (semi-annual water, annual C.O.).
-3. New block `Stawki najemcy` derives tenant-facing items by formula from `Ceny media` / `Faktury`. `Szablon` and media tabs read from it.
-4. Tenant pays meter consumption × fixed tenant rate. Rate is reset once per half-year after the cooperative settlement: last actual cost, losses (`Ubytki`) included, rounded up with margin. Tenant tolerates a ~20–30 zł shortfall in the correction; any overpayment is refunded.
-5. Working tenant rates: cold water `15,00 zł/m³`, hot water `53,00 zł/m³` (margin provisional, see step 6), fixed heating fee `45 zł/month`.
-6. Email (`Szablon`): one line per item without component breakdown, e.g. `Ciepła woda | 53,00 zł/m³ × 3,25 m³`.
-7. Semi-annual correction in `Szablon`: sign follows the result (shortfall increases the amount due, overpayment decreases it); amount and label come by formula from `Rozliczenie`.
-8. C.O. follows the same rules — separate task after water.
+1. `Ceny media` zawiera wyłącznie pozycje źródłowe: nazwy i stawki 1:1 z rozliczeniami spółdzielni i fakturami Tauron. Bez sum, bez VAT, bez marży.
+2. `Faktury` przechowuje koszty rzeczywiste z rozliczeń (woda półroczna, C.O. roczne).
+3. Nowy blok `Stawki najemcy` wyprowadza pozycje widoczne dla najemcy wzorami z `Ceny media` / `Faktury`. `Szablon` i zakładki mediów czytają stąd.
+4. Najemca płaci za zużycie z licznika × ustaloną stawkę najemcy. Stawka resetuje się raz na pół roku po rozliczeniu spółdzielni: ostatni koszt rzeczywisty, straty (`Ubytki`) włączone, zaokrąglenie w górę z marżą. Najemca akceptuje niedobór ok. 20–30 zł w korekcie; nadpłata jest zwracana.
+5. Robocze stawki najemcy: woda zimna `15,00 zł/m³`, woda ciepła `53,00 zł/m³` (marża tymczasowa, patrz krok 6), stała opłata za ogrzewanie `45 zł/mies.`
+6. E-mail (`Szablon`): jeden wiersz na pozycję bez rozbicia na składniki, np. `Ciepła woda | 53,00 zł/m³ × 3,25 m³`.
+7. Korekta półroczna w `Szablon`: znak zgodny z wynikiem (niedobór zwiększa należność, nadpłata ją zmniejsza); kwota i etykieta pochodzą ze wzoru z `Rozliczenie`.
+8. C.O. według tych samych zasad — osobne zadanie po wodzie.
 
-## Steps
+## Kroki
 
-| # | Change | Needs user data |
+| # | Zmiana | Potrzebne dane użytkownika |
 |---|---|---|
-| 1 | Find every formula/script that looks up `Ceny media` rows by `Pozycja` name. Then rename rows to source names, add `Fund.remontowy-mienie SM` (`0,03 zł/m²`), split parking rows into net source lines. | no |
-| 2 | Fix `Faktury` Woda_zimna 2026-01-31..06-30 `Kwota`: `596,10` → `595,10` (`40,047 × 14,86`). | no |
-| 3 | Create `Stawki najemcy` with formulas (hot water margin provisional at 53 zł). | no |
-| 4 | Point `Szablon` and `Woda ciepla` (`Cena_jedn`) at `Stawki najemcy`; fix correction sign (`=D25+D8-D28` subtracts a shortfall) and its label (says C.O., amount is cold water `-41,65`). | no |
-| 5 | Backfill `Ceny media` history from 2023-09 and past semi-annual water settlements into `Faktury`. | yes: statement screenshots |
-| 6 | Validate hot-water margin (Q14) against settlement history; compute tenant overpayment from the `59,72` period (Q6). | yes: settlements + rates actually used in sent emails |
+| 1 | Znaleźć każdą formułę/skrypt, który szuka wierszy `Ceny media` po nazwie `Pozycja`. Potem zmienić nazwy wierszy na źródłowe, dodać `Fund.remontowy-mienie SM` (`0,03 zł/m²`), rozbić wiersze parkingu na osobne wiersze netto źródłowe. **Wykonane 2026-11-22**: zmienione nazwy (5 pozycji), klucz w `Woda zimna!E4` i w `Stawki najemcy!H`, dodany `Fund.remontowy-mienie SM` (`Data_od` 2026-01-01 przyjęte jak przy `Fundusz remontowy`), parking rozbity na 4 wiersze netto (`Miejsce postojowe - Eksploatacja` 67,00, `- Fundusz remontowy-mienie SM` 0,78, `- Fundusz remontowy` 27,39, `- Energia elektryczna` 3,80; VAT w `Stawki najemcy!K5`). | nie |
+| 2 | Poprawić `Faktury` Woda_zimna 2026-01-31..06-30 `Kwota`: `596,10` → `595,10` (`40,047 × 14,86`). | nie |
+| 3 | Utworzyć `Stawki najemcy` ze wzorami (marża wody ciepłej tymczasowo przy 53 zł). **Wykonane 2026-11-22** (zakładka ze wzorami z `Ceny media`/`Faktury`/`Ustawienia`, `Data_od`-aware, klucze w kol. H, marża w `K4`). Zostaje po kroku 2: ponowne sprawdzenie wody zimnej (15). | nie |
+| 4 | Podpiąć `Szablon` i `Woda ciepla` (`Cena_jedn`) pod `Stawki najemcy`; naprawić znak korekty (`=D25+D8-D28` odejmuje niedobór) i jej etykietę (pisze C.O., kwota to woda zimna `-41,65`). **Wykonane 2026-11-22 w nowej zakładce `Szablon nowy`** (stary `Szablon` nietknięty do czasu akceptacji; `Woda ciepla!E4` czyta ze `Stawki najemcy`, punkt cofnięcia: `docs/plans/2026-11-22-step4-rollback.md`). Zostaje: przełączenie (zmiana nazw zakładek), podpięcie `Woda zimna`/`Prad`/`CO` jeśli ma być spójne. | nie |
+| 5 | Uzupełnić historię `Ceny media` od 2023-09 i zeszłe półroczne rozliczenia wody w `Faktury`. | tak: zrzuty rozliczeń |
+| 6 | Zweryfikować marżę wody ciepłej (Q14) względem historii rozliczeń; wyliczyć nadpłatę najemcy z okresu `59,72` (Q6). | tak: rozliczenia + stawki faktycznie użyte w wysłanych mailach |
 
-Renames to apply in step 1 (current → source):
+Zmiany nazw w kroku 1 (obecne → źródłowe):
 
-| Current | Source name |
+| Obecna | Nazwa źródłowa |
 |---|---|
 | Zimna woda i ścieki | Woda i ścieki-zaliczka |
 | Ciepła woda - podgrzanie (stała) | Podgrzanie wody-opł.stała |
@@ -40,9 +40,9 @@ Renames to apply in step 1 (current → source):
 | Gniazdo RTV | Opłata za gniazdo AZART |
 | Abonament za wodomierz | Abonament za wodomierz główny MPWiK |
 
-## Known data issues
+## Znane problemy z danymi
 
-- Old aggregate `Ciepła woda` rows (incl. `59,72` from 2026-01) look like sums of three rates (cold water counted twice). `59,72` must not feed any tenant rate.
-- Rate dates per the 30.06.2026 settlement: cold water / water-to-heat `13,87` in 01–02.2026, `14,86` from 03.2026; heating `25` in 01–03.2026, `30` from 04.2026; fixed heating fee `0,49` in 01–03.2026, `0,66` from 04.2026 (sheet currently says from 03.2026).
-- `Zimna woda i ścieki 14,02` (2026-01..07) is not in any document seen so far — origin unknown.
-- New split rows start `2026-07-15`, overlapping the old `Ciepła woda` row ending the same day.
+- Stare zagregowane wiersze `Ciepła woda` (w tym `59,72` od 2026-01) wyglądają jak sumy trzech stawek (woda zimna liczona podwójnie). `59,72` nie może zasilać żadnej stawki najemcy.
+- Daty stawek wg rozliczenia z 30.06.2026: woda zimna / woda do podgrzania `13,87` w 01–02.2026, `14,86` od 03.2026; ogrzewanie `25` w 01–03.2026, `30` od 04.2026; stała opłata za ogrzewanie `0,49` w 01–03.2026, `0,66` od 04.2026 (w arkuszu obecnie jest od 03.2026).
+- `Zimna woda i ścieki 14,02` (2026-01..07) nie występuje w żadnym dotąd widzianym dokumencie — pochodzenie nieznane.
+- Nowe rozbite wiersze zaczynają się `2026-07-15`, nakładając się na stary wiersz `Ciepła woda` kończący się tego samego dnia.
