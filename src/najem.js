@@ -72,7 +72,7 @@ function konfigurujTrigger() {
 
   ScriptApp.newTrigger('przetworzNoweLiczniki')
     .timeBased()
-    .atHour(20)
+    .atHour(13)
     .everyDays(1)
     .inTimezone(Session.getScriptTimeZone())
     .create();
