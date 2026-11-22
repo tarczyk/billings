@@ -6,7 +6,7 @@ Repo: `/Users/tarczyk/GitReposPriv/billings`. Skoroszyt `rozliczenie-najem`, id 
 - Plan i statusy kroków: `docs/plans/2026-09-27-water-tenant-rates.md` (kroki 1, 3, 4 oznaczone jako wykonane, z wyjątkami).
 - Punkt cofnięcia `Woda ciepla!E4:F4`: `docs/plans/2026-11-22-step4-rollback.md`.
 - Spec: issue #3 (`tarczyk/billings`), decyzja `docs/adr/0003-szablon-reads-tenant-rates-per-visit.md`, terminy w `GLOSSARY.md`.
-- Working tree czysty (`git status --short` puste). Wszystko scommitowane: `a66efed`, `cf2cf4b`, `18889bb`, `094258a`, `e2b2d28` (seam 2, patrz punkt 3 niżej). Komentarz statusu na issue #3: https://github.com/tarczyk/billings/issues/3#issuecomment-7077284100.
+- Niezacommitowane w working tree: ADR 0001/0002, plany, handoff, `src/najem.js`, `AGENTS.md`, `CLAUDE.md`, `docs/agents/`, nowy `docs/plans/2026-11-22-step4-rollback.md`. Nic nie commitowano w tej sesji.
 
 ## Co zrobiono w arkuszu (stan zweryfikowany odczytem)
 - **`Ceny media`**: 5 zmian nazw na źródłowe, dodany `Fund.remontowy-mienie SM` (0,03, `Data_od` 2026-01-01 przyjęte z `Fundusz remontowy`), parking rozbity na 4 wiersze netto z prefiksem `Miejsce postojowe - ` (Eksploatacja 67,00; Fundusz remontowy-mienie SM 0,78; Fundusz remontowy 27,39; Energia elektryczna 3,80). Klucz w `Woda zimna!E4` zaktualizowany.
@@ -21,19 +21,16 @@ Repo: `/Users/tarczyk/GitReposPriv/billings`. Skoroszyt `rozliczenie-najem`, id 
 - `Ceny media` formuły w zakładkach mediów czytają zakres do wiersza 50 (`$B$4:$B$50`). Tabela kończy się teraz na wierszu 46. Dalsze dopisywanie wymaga poszerzenia zakresu.
 
 ## Otwarte sprawy
-
-Issue #3 **nie jest zamknięty** — zostaje otwarty z `ready-for-agent`, bo punkty 1, 2, 4–9 niżej wymagają decyzji/danych użytkownika.
-
 1. **Przełączenie nazwy zakładki** „Szablon nowy” → „Szablon” (jeśli n8n ma czytać „Szablon”). Decyzja użytkownika.
 2. **Krok 2 planu**: `Faktury` Woda_zimna 2026-01-31..06-30 `Kwota` `596,10` → `595,10`. Wzór wody zimnej tego nie używa (liczy z `Cena`), ale dane są błędne.
-3. ~~**Seam 2 z issue #3**~~ — zrobione (ta sesja, commitowane): `dopiszOdczytDoRozliczen_`/`dopiszBladSyncDoLogRozliczenia_` w `src/najem.js` czytają teraz `file.getDateCreated()`, nie `new Date()`; wydzielona czysta funkcja `wyznaczWizyteZDatyUtworzenia_` + testy w `src/najem.test.js`/`src/najem-sync.test.js` (`npm test`, Node `node --test`, zero nowych zależności). `teraz` (dzień przetworzenia) zostaje tylko dla loga `odczyty-rozpoznane` i nazwy archiwum — to inny log, nie domenowy `Odczyt`. Niezweryfikowane end-to-end na żywym Drive/Sheet (brak dostępu lokalnie) — status: Code-supported, nie Verified.
+3. **Seam 2 z issue #3**: `Data` i `ID_wizyty` z daty utworzenia zdjęcia w `src/najem.js` (dziś `V-${yyyy-MM}` z `teraz`, linie ~467 i ~540). Niezacommitowane zmiany w tym pliku istnieją już od wcześniej, przejrzyj `git diff` przed edycją.
 4. **Weryfikacje wymagające użytkownika**: (a) `Ubytki 4,82` w `Faktury` to kwota zł czy %? (zakładam zł, wychodzi stawka zimnej wody 15); (b) opłata stała 269,70 zł / 6 mies. = 45 (niepotwierdzone na dokumencie); (c) `Data_od` 0,03 funduszu.
 5. **Stawki historyczne**: wizyty przed 2026-07-15 nie mają wierszy w `Stawki najemcy`, więc nie da się ich odtworzyć. Wymaga decyzji, czy dopisać (krok 5/6 planu, dane od użytkownika).
 6. **Znane dane do poprawy w `Ceny media`**: `Podgrzanie wody-opł.stała 0,66` ma `Data_od` 2026-03-01 zamiast 2026-04-01, wiersz 0,49 kończy się 02-28 zamiast 03-31 (wg planu, „Znane problemy”).
 7. **Kosmetyka `Szablon nowy`**: etykieta korekty powtarza boilerplate przy wielu korektach; `Woda ciepla` bez „ł" w etykiecie (`SUBSTITUTE` z `_`); lista wyboru `C3` statyczna (tylko ostrzeżenie).
 8. **CO**: brak odczytów CO dla V-2026-09 i -10 blokuje maile (dane od użytkownika).
 9. Kolejne zakładki mediów (`Woda zimna`, `Prad`, `CO`) wciąż czytają `Ceny media`, nie `Stawki najemcy`. Poza planem; zdecyduj, czy ujednolicić.
-10. ~~Po stabilizacji rozważ commit dokumentów i issue #3~~ — zrobione: dokumenty scommitowane, status dopisany na issue #3 (link wyżej). Zamknięcie issue #3 zostaje do czasu punktu 1 (przełączenie nazwy zakładki) i reszty otwartych spraw.
+10. Po stabilizacji rozważ commit dokumentów i issue #3 (zaktualizuj o to, co jest zrobione, i zamknij po przełączeniu szablonu i seam 2).
 
 ## Sugerowane skille
 - `rental-sheet` (każda zmiana arkusza lub Apps Script; zawiera wymóg odczytu przed zapisem i raportowanie dowodów).
