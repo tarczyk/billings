@@ -1,4 +1,4 @@
-# Context — rozliczenie-najem (arkusz Google Sheets)
+# rozliczenie-najem (arkusz Google Sheets)
 
 ## Ustawienia regionalne arkusza
 
@@ -50,7 +50,20 @@ Klucz dokumentu w kolumnie `Źródło` = rodzaj + okres, np. `NAL/2026-10`, `ROZ
 
 **`Faktury` (tab)** — rejestr **kosztów rzeczywistych** z rozliczeń (spółdzielnia: półroczne woda, roczne C.O.; Tauron: prąd), per okres rozliczeniowy: `Zuzycie`, `Cena` (dla ciepłej wody = Z.W. + C.W., np. `51,34`), `Kwota`, `Ubytki`, `Oplata stala`. Uzupełnia `Ceny media` (stawki zaliczkowe/miesięczne) — to naturalne miejsce na stawki rozliczeniowe. Stan 2026-09-27: zawiera tylko rozliczenia z 2026.
 
-**`Szablon` (tab)** — treść maila do najemcy; **w 100% statyczna** (brak formuł łączących z `Ceny media`/`Ustawienia`/zakładkami zużycia) — wypełniana ręcznie co miesiąc. To jest strukturalna przyczyna niekonsystencji: nic nie wymusza zgodności między `Szablon` i `Ceny media`. Decyzja użytkownika (2026-09-27): docelowo podłączyć `Szablon` formułami do `Ceny media`/`Ustawienia`, żeby rozjazd był strukturalnie niemożliwy — **osobne, nierozpoczęte zadanie** (poza zakresem sesji 2026-09-27; ta sesja tylko ustabilizowała same dane w `Ceny media`).
+**`Szablon` (tab)** — treść maila do najemcy; **w 100% statyczna** (brak formuł łączących z `Ceny media`/`Ustawienia`/zakładkami zużycia) — wypełniana ręcznie co miesiąc. To jest strukturalna przyczyna niekonsystencji: nic nie wymusza zgodności między `Szablon` i `Ceny media`. Decyzja użytkownika (2026-09-27): docelowo podłączyć `Szablon` formułami, żeby rozjazd był strukturalnie niemożliwy — **osobne, nierozpoczęte zadanie**. **Korekta 2026-11-21**: `Szablon` czyta stawki wyłącznie ze `Stawki najemcy` (nigdy bezpośrednio z `Ceny media`) — chroni to Zasadę stabilności. `Stawki najemcy` na dziś **nie istnieje** (krok 3 planu).
+
+**Kiedy `Szablon` się aktualizuje (decyzje użytkownika 2026-11-21):**
+- Liczy się dla **wskazanej Wizyty** (pole wyboru `ID_wizyty`), nie dla „najnowszej" — starsze Wizyty można odtworzyć. Brak osobnego snapshotu/zakładki `Wysłane` (decyzja 2026-11-21): odtwarzalność zapewniają `Odczyty` + `Data_od` stawek, dowodem wysyłki jest sam mail.
+- Stawka najemcy ma okres ważności `Data_od` (jak w `Ceny media`); Wizyta dostaje stawkę obowiązującą w jej okresie, a zmiana stawki nie zmienia wstecz odtworzonych Wizyt.
+- **Korekta półroczna** pojawia się tylko w Wizycie wskazanej ręcznie (przypisane `ID_wizyty`) i tylko gdy wartość ≠ 0.
+- Przy niepełnych danych (brak Odczytu medium w Wizycie, `SPRAWDŹ` bez `Stan_przed_wymianą`) na górze maila wyraźne ostrzeżenie „NIE WYSYŁAĆ" z przyczyną; placeholder `0` nie może wyglądać jak poprawna kwota.
+- Wysyłka **na żądanie** (n8n bierze treść po jawnym „wyślij"), nie automatycznie po ostatnim Odczycie.
+- `ID_wizyty` ma wynikać z **daty odczytu** licznika (nie z dnia przetworzenia zdjęcia); nazwa miesiąca w tytule = miesiąc **końca okresu odczytowego** (okres 10.07–10.08 → „sierpień", `V-2026-08`).
+- **Data odczytu** = data utworzenia pliku zdjęcia licznika (nie dzień przetworzenia przez skrypt); z niej wynika `ID_wizyty`. Historycznych `ID_wizyty` nie zmieniamy, o ile zgadzają się z miesiącem końca okresu. Odczyt zwykle ok. 10. dnia miesiąca.
+- **Okres vs opłaty**: zużycie mediów dotyczy okresu od odczytu poprzedniej do odczytu bieżącej Wizyty (10.07–10.08); czynsz, zaliczki i opłaty stałe w mailu dotyczą miesiąca z tytułu (sierpień), bo czynsz właściciela jest za ten miesiąc. Tytuł „wrzesień" przy okresie do 10.08 to błąd statycznego szablonu.
+- **Czynsz** (np. `3 100,00 zł`) — odstępne dla wynajmującego, stała kwota ustalana **raz w roku aneksem do umowy (wrzesień)**; nie jest stawką za jednostkę ani Pozycją źródłową. Trafia do maila ze `Stawki najemcy` z `Data_od` (nowa wartość obowiązuje od Wizyty za wrzesień), więc podwyżka nie zmienia odtworzonych Wizyt sprzed aneksu.
+- `Stawki najemcy` = osobna zakładka: wiersz = Pozycja najemcy + `Data_od` + stawka.
+- Okres w mailu wynika z Dat dwóch kolejnych Wizyt w `Odczyty`; tytuł i temat są wyliczane z tych dat, nie wpisywane ręcznie.
 
 **Naprawiona literałowa niekonsystencja (2026-09-27, Verified z dokumentu spółdzielni)**: `Szablon` wiersz "Miejsce postojowe - prąd" = `4,67 zł` był poprawny. `Ceny media` miało błędną formułę `=22,76*1,23` (pomyliła zagregowaną kwotę VAT całego miejsca postojowego z netto samej energii elektrycznej, `3,80 zł`) — dała `27,99`, co było błędne. **Uwaga**: w tej samej sesji wcześniej błędnie ustalono odwrotnie (Ceny media=poprawne); to zostało odwrócone po podaniu przez użytkownika treści dokumentu źródłowego. Naprawione na `=3,80*1,23` (`4,67`).
 
