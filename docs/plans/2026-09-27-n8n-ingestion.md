@@ -1,52 +1,52 @@
-# Plan: n8n ingestion of source documents
+# Plan: pozyskiwanie dokumentów źródłowych przez n8n
 
-Status: approved 2026-09-27, not started.
+Status: zatwierdzony 2026-09-27, nie rozpoczęty.
 
-Read first:
-- `CONTEXT.md` — terms: Dokument źródłowy, Pozycja źródłowa / Pozycja najemcy, `Ceny media`, `Faktury`.
+Najpierw przeczytaj:
+- `GLOSSARY.md` — terminy: dokument źródłowy, pozycja źródłowa / pozycja najemcy, `Ceny media`, `Faktury`.
 - `docs/adr/0001-ceny-media-mirrors-source-documents.md`
 - `docs/adr/0002-n8n-owns-ingestion-end-to-end.md`
-- Prerequisite: step 1 of `docs/plans/2026-09-27-water-tenant-rates.md` (source names in `Ceny media`) — change detection matches on those names.
+- Wymaganie wstępne: krok 1 z `docs/plans/2026-09-27-water-tenant-rates.md` (nazwy źródłowe w `Ceny media`) — wykrywanie zmian dopasowuje się do tych nazw.
 
-Runtime: n8n in Docker on the owner's always-on home server. Workflows exported with `n8n export:workflow` to `n8n/workflows/` and committed after every change. Credentials (Google, e-BOK, Telegram) live only in n8n credentials, never in the repo.
+Środowisko: n8n w Dockerze na domowym serwerze właściciela (ciągle włączonym). Workflow eksportuje się przez `n8n export:workflow` do `n8n/workflows/` i commituje po każdej zmianie. Dane logowania (Google, e-BOK, Telegram) są wyłącznie w credentialach n8n, nigdy w repozytorium.
 
-## Sources and document types
+## Źródła i typy dokumentów
 
-| Source | Type | Format | Target |
+| Źródło | Typ | Format | Cel |
 |---|---|---|---|
-| Spółdzielnia (e-BOK marhalonline.pl → Kartoteki) | Naliczenie miesięczne | HTML (preformatted text) | `Ceny media` — changes only |
-| Spółdzielnia | Rozliczenie wody (semi-annual) | HTML (table) | `Faktury` |
-| Spółdzielnia | Rozliczenie C.O. (annual) | HTML | `Faktury` |
-| Tauron (e-BOK) | Faktura | unknown — check e-BOK; fallback PDF + LLM | `Faktury` + electricity rate in `Ceny media` |
+| Spółdzielnia (e-BOK marhalonline.pl → Kartoteki) | Naliczenie miesięczne | HTML (tekst preformatowany) | `Ceny media` — tylko zmiany |
+| Spółdzielnia | Rozliczenie wody (półroczne) | HTML (tabela) | `Faktury` |
+| Spółdzielnia | Rozliczenie C.O. (roczne) | HTML | `Faktury` |
+| Tauron (e-BOK) | Faktura | nieznany — sprawdzić e-BOK; awaryjnie PDF + LLM | `Faktury` + stawka prądu w `Ceny media` |
 
-Document key (`Źródło` column): type + period — `NAL/2026-10`, `ROZ-WODA/2026-H1`, `ROZ-CO/2025`; Tauron: invoice number. Store a Drive link to the file next to it.
+Klucz dokumentu (kolumna `Źródło`): typ + okres — `NAL/2026-10`, `ROZ-WODA/2026-H1`, `ROZ-CO/2025`; Tauron: numer faktury. Obok zapisać link Dysku do pliku.
 
-## v1 — manual download, automated parsing
+## v1 — ręczne pobranie, automatyczna analiza
 
-1. Owner saves the e-BOK page with Ctrl+S ("HTML only") into a Drive inbox folder (e.g. `dokumenty-biezace`); Tauron as PDF until its format is known.
-2. n8n polls the folder, skips files whose document key is already processed.
-3. Parse deterministically from HTML (no LLM) for cooperative documents; LLM extraction only for Tauron PDF fallback.
-4. Validate before staging; on failure do not stage, email the reason:
-   - every line: rate × quantity = amount (±0,01 zł);
-   - sum of lines = document total ("RAZEM DO ZAPŁATY" / "RAZEM KOSZTY");
-   - unknown item names are flagged as "nowa pozycja", never force-matched.
-5. Change detection for Naliczenie miesięczne: compare each line with the open row (empty `Data_do`) in `Ceny media`. Stage only changes (new rate from the 1st of the document month, previous row closed the day before) and new items. No change → notification "bez zmian, suma zgodna".
-6. Stage into a review tab `Dokumenty rozpoznane` with an approval checkbox. n8n polls approved rows and promotes them to `Ceny media` / `Faktury`, then archives the file.
-7. Apps Script meter pipeline (`src/najem.js`) keeps running unchanged; it writes to `Odczyty`, n8n does not.
+1. Właściciel zapisuje stronę e-BOK skrótem Ctrl+S („tylko HTML”) do folderu inbox na Dysku (np. `dokumenty-biezace`); Tauron jako PDF, dopóki format nie jest znany.
+2. n8n odpytuje folder; pomija pliki, których klucz dokumentu jest już przetworzony.
+3. Parsowanie deterministyczne z HTML (bez LLM) dla dokumentów spółdzielni; ekstrakcja LLM tylko dla awaryjnego PDF-u Tauron.
+4. Walidacja przed stagingiem; przy niepowodzeniu nie stagingować, wysłać e-mail z powodem:
+   - każdy wiersz: stawka × ilość = kwota (±0,01 zł);
+   - suma wierszy = suma dokumentu („RAZEM DO ZAPŁATY” / „RAZEM KOSZTY”);
+   - nieznane nazwy pozycji oznaczać jako „nowa pozycja”, nigdy na siłę dopasowywać.
+5. Wykrywanie zmian dla naliczenia miesięcznego: porównać każdy wiersz z otwartym wierszem (puste `Data_do`) w `Ceny media`. Stagingować tylko zmiany (nowa stawka od 1. dnia miesiąca dokumentu, poprzedni wiersz zamknięty dzień wcześniej) oraz nowe pozycje. Brak zmian → powiadomienie „bez zmian, suma zgodna”.
+6. Staging do zakładki przeglądu `Dokumenty rozpoznane` z polem zatwierdzenia. n8n odpytuje zatwierdzone wiersze i promuje je do `Ceny media` / `Faktury`, potem archiwizuje plik.
+7. Pipeline liczników w Apps Script (`src/najem.js`) działa bez zmian; zapisuje do `Odczyty`, n8n nie ingeruje.
 
-Prerequisites: sample HTML of each cooperative type in `n8n/samples/` (gitignored — personal data). Owner checks Tauron e-BOK format.
+Wymagania wstępne: przykładowe HTML każdego typu spółdzielczego w `n8n/samples/` (w `.gitignore` — dane osobowe). Właściciel sprawdza format e-BOK Tauron.
 
-## v2 — automated e-BOK download
+## v2 — zautomatyzowane pobieranie z e-BOK
 
-- n8n logs in to both e-BOKs and fetches the same HTML the v1 parser already handles (headless browser, e.g. Browserless container, if plain HTTP login is not feasible).
-- Check each e-BOK's terms allow automated access; login must work without captcha/SMS.
+- n8n loguje się do obu e-BOK-ów i pobiera ten sam HTML, który parser v1 już obsługuje (przeglądarka headless, np. kontener Browserless, jeśli zwykłe logowanie HTTP jest nierealne).
+- Sprawdzić regulaminy każdego e-BOK pod kątem dostępu zautomatyzowanego; logowanie musi działać bez captchy/SMS.
 
-## v3 — Telegram bot
+## v3 — bot Telegram
 
-- Meter photos via Telegram bot in n8n; migrate `przetworzNoweLiczniki` logic (dedupe, rising-value check, archive, report) from Apps Script to n8n, then retire the Apps Script trigger.
-- Approval of staged documents moves to Telegram buttons (✅/❌).
-- Public HTTPS for the Telegram webhook via Cloudflare Tunnel (no router port forwarding).
+- Zdjęcia liczników przez bota Telegram w n8n; migracja logiki `przetworzNoweLiczniki` (deduplikacja, kontrola rosnących odczytów, archiwum, raport) z Apps Script do n8n, potem wyłączenie triggera w Apps Script.
+- Zatwierdzanie dokumentów ze stagingu przenosi się na przyciski w Telegramie (✅/❌).
+- Publiczny HTTPS dla webhooka Telegram przez Cloudflare Tunnel (bez przekierowania portów na routerze).
 
-## Follow-ups
+## Dalsze kroki
 
-- Update `.cursor/skills/rental-sheet/SKILL.md` operating model: n8n becomes a system writing to the workbook; layout changes to `Ceny media`, `Faktury`, `Dokumenty rozpoznane` must be checked against `n8n/workflows/`.
+- Zaktualizować model działania w `.cursor/skills/rental-sheet/SKILL.md`: n8n staje się systemem zapisującym do skoroszytu; zmiany układu w `Ceny media`, `Faktury`, `Dokumenty rozpoznane` trzeba uzgadniać z `n8n/workflows/`.
