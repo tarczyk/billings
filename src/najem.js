@@ -426,6 +426,23 @@ function skopiujFormatWierszaZRzeduPowyzej_(sheet, nextRow, colStart, colEnd, mi
   const prevRange = sheet.getRange(`${colStart}${nextRow - 1}:${colEnd}${nextRow - 1}`);
   const destRange = sheet.getRange(`${colStart}${nextRow}:${colEnd}${nextRow}`);
   prevRange.copyTo(destRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  // PASTE_FORMAT nie przenosi walidacji (np. dropdown w kolumnie Status).
+  prevRange.copyTo(destRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+}
+
+/** Ostatni wiersz z danymi w kolumnie B (getLastRow() liczy też formaty/inne kolumny i może wskazać za daleko). */
+function ostatniWierszDanychKolB_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < ROZL_DATA_START_ROW) {
+    return ROZL_DATA_START_ROW - 1;
+  }
+  const vals = sheet.getRange(ROZL_DATA_START_ROW, ROZL_COL_DATA, lastRow - ROZL_DATA_START_ROW + 1, 1).getValues();
+  for (let i = vals.length - 1; i >= 0; i--) {
+    if (vals[i][0] !== '' && vals[i][0] !== null) {
+      return ROZL_DATA_START_ROW + i;
+    }
+  }
+  return ROZL_DATA_START_ROW - 1;
 }
 
 /**
@@ -457,7 +474,7 @@ function dopiszOdczytDoRozliczen_(rozliczeniaSheet, teraz, meterType, wartosc, e
     return;
   }
 
-  const nextRow = rozliczeniaSheet.getLastRow() + 1;
+  const nextRow = ostatniWierszDanychKolB_(rozliczeniaSheet) + 1;
   const destRange = rozliczeniaSheet.getRange(`B${nextRow}:G${nextRow}`);
   skopiujFormatWierszaZRzeduPowyzej_(rozliczeniaSheet, nextRow, 'B', 'G', ROZL_DATA_START_ROW);
   destRange.setValues([[dataWizyty, idWizyty, medium, stan, jednostka, 'OK']]);
