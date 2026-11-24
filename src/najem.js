@@ -6,6 +6,30 @@ const FOLDER_BIEZACE_LABEL = 'odczyty-biezace';
 
 const VALID_METER_TYPES = ['CO', 'PRAD', 'WODA_ZIMNA', 'WODA_CIEPLA'];
 
+// Numery seryjne fizycznych liczników → typ. To jest jedyne wiarygodne źródło identyfikacji
+// (Gemini nie potrafi niezawodnie odróżnić zimnej/ciepłej wody po samym wyglądzie licznika —
+// patrz issue zgłoszony po błędnej klasyfikacji odczytu woda-ciepła jako woda-zimna).
+// Klucze są znormalizowane (wielkie litery, bez spacji/myślników) przez normalizujNumerSeryjny_.
+const METER_SERIALS = {
+  '521730059': 'WODA_ZIMNA',
+  '519734717': 'WODA_CIEPLA',
+  '547038719': 'CO',
+  'S34U28':     'PRAD'
+};
+
+function normalizujNumerSeryjny_(raw) {
+  return (raw || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** Zwraca typ licznika na podstawie numeru seryjnego widocznego na zdjęciu, albo null jeśli nieznany. */
+function typLicznikaZNumeruSeryjnego_(serial) {
+  const znormalizowany = normalizujNumerSeryjny_(serial);
+  if (!znormalizowany) {
+    return null;
+  }
+  return METER_SERIALS[znormalizowany] || null;
+}
+
 // ── Spreadsheet IDs ───────────────────────────────────────────────────────────
 const SPREADSHEET_ID = "14oxXC2s_ubqfbPxeYd2hg5WZPODmfLuNUIHxYx8OtjI"; // odczyty-rozpoznane.gsheet
 const ROZLICZENIA_SPREADSHEET_ID = "1vfrt1nmYMXcUie9C8CRCVVN39hfysj8drR24a8VzXDw"; // Rozliczenia_najem
@@ -114,6 +138,39 @@ function normalizeMeterType_(rawType) {
   return t;
 }
 
+/**
+ * Ustala typ licznika na podstawie odpowiedzi Gemini. Numer seryjny (METER_SERIALS) jest
+ * nadrzędny względem wizualnego zgadywania typu — to jedyna cecha fizycznie przypisana do
+ * konkretnego licznika. Jeśli numer seryjny jest widoczny, ale nieznany, rzuca błąd zamiast po
+ * cichu zaufać zgadywance Gemini (tak powstał błąd: woda-ciepła rozpoznana jako woda-zimna).
+ */
+function ustalTypLicznika_(odczyt, fileName) {
+  const typZWizualnegoZgadywania = normalizeMeterType_(odczyt.type);
+
+  if (odczyt.serial) {
+    const typZSeryjnego = typLicznikaZNumeruSeryjnego_(odczyt.serial);
+    if (!typZSeryjnego) {
+      throw new Error(
+        `Nierozpoznany numer seryjny licznika "${odczyt.serial}" na zdjęciu ${fileName}. ` +
+        'Dodaj go do METER_SERIALS w najem.js albo sprawdź, czy Gemini poprawnie odczytało numer.'
+      );
+    }
+    if (typZWizualnegoZgadywania && typZWizualnegoZgadywania !== typZSeryjnego) {
+      Logger.log(
+        `Uwaga: typ z numeru seryjnego (${typZSeryjnego}) różni się od wizualnego zgadywania Gemini ` +
+        `(${typZWizualnegoZgadywania}) dla ${fileName}. Użyto numeru seryjnego.`
+      );
+    }
+    return typZSeryjnego;
+  }
+
+  Logger.log(
+    `Ostrzeżenie: brak czytelnego numeru seryjnego na ${fileName} — typ ustalony wizualnie przez ` +
+    `Gemini (${odczyt.type}). Sprawdź ręcznie, czy to poprawny licznik.`
+  );
+  return typZWizualnegoZgadywania;
+}
+
 function etykietaLicznika_(meterType) {
   const map = {
     CO:          'c.o.',
@@ -217,7 +274,7 @@ function przetworzNoweLiczniki() {
 
       Utilities.sleep(GEMINI_DELAY_MS);
 
-      const meterType = normalizeMeterType_(odczyt.type);
+      const meterType = ustalTypLicznika_(odczyt, fileName);
       const wartosc   = Number(odczyt.value);
       const meterLabel = meterType ? etykietaLicznika_(meterType) : meterLabelFallback;
 
@@ -583,13 +640,17 @@ function analizujZdjecieGemini(base64Image, mimeType) {
   const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   const prompt = `
-Extract the meter reading value from the image.
-Possible meter types are: PRAD, WODA_ZIMNA, WODA_CIEPLA, CO.
-Ignore serial numbers, labels, barcodes, and unrelated text.
+Extract the meter reading value AND the meter's serial number from the image.
+The serial number is the short alphanumeric identifier printed on the meter's nameplate/badge
+(e.g. "521730059" or "S34U28") — not a long barcode number and not a certification/type code.
+Possible meter types are: PRAD, WODA_ZIMNA, WODA_CIEPLA, CO. The serial number is the
+authoritative way to identify which physical meter this is — the visual type guess is only a
+fallback, used when the serial number cannot be read.
 Return ONLY valid JSON in this exact format:
-{"type":"PRAD|WODA_ZIMNA|WODA_CIEPLA|CO|UNKNOWN","value":12345}
-If reading is unclear, return:
-{"type":"UNKNOWN","value":null}
+{"type":"PRAD|WODA_ZIMNA|WODA_CIEPLA|CO|UNKNOWN","value":12345,"serial":"521730059"}
+If the serial number is not visible/legible, set "serial" to null.
+If the reading value is unclear, return:
+{"type":"UNKNOWN","value":null,"serial":null}
 `.trim();
 
   const payload = {
@@ -658,8 +719,9 @@ function parsujOdpowiedzGemini_(responseText) {
   }
 
   return {
-    type:  parsed.type  ?? "UNKNOWN",
-    value: parsed.value ?? null
+    type:   parsed.type   ?? "UNKNOWN",
+    value:  parsed.value  ?? null,
+    serial: parsed.serial ?? null
   };
 }
 
@@ -705,6 +767,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     wyznaczWizyteZDatyUtworzenia_,
     dopiszOdczytDoRozliczen_,
-    kluczOdczytuRozliczenia_
+    kluczOdczytuRozliczenia_,
+    typLicznikaZNumeruSeryjnego_,
+    ustalTypLicznika_
   };
 }
