@@ -1,0 +1,8 @@
+**/node_modules/**
+**/.git/**
+
+# Node-only test files (require()/module.exports, run via `npm test`) are not valid
+# Google Apps Script — GAS shares one global scope across all pushed files, so a
+# destructured `const { fn } = require(...)` collides with the `function fn` it
+# imports from najem.js ("Identifier 'fn' has already been declared"). Never push these.
+**/*.test.js
